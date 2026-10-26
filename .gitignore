@@ -1,0 +1,12 @@
+node_modules
+.pnpm-store
+.agents
+.next
+*.tsbuildinfo
+.env
+.env.local
+dist
+coverage
+skills-lock.json
+.agents
+skills-lock.json

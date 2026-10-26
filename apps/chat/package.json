@@ -1,0 +1,27 @@
+{
+  "name": "@tether/chat",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file=../../.env --import tsx --watch src/index.ts",
+    "start": "node --env-file=../../.env --import tsx src/index.ts",
+    "test": "BETTER_AUTH_SECRET=01234567890123456789012345678901 DATABASE_URL=postgresql://tether:tether@localhost:5433/tether REDIS_URL=redis://localhost:6379 tsx --test src/*.test.ts",
+    "db:migrate": "node --env-file=../../.env ./node_modules/.bin/auth migrate --config src/auth.ts --yes"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.0.0",
+    "@socket.io/redis-adapter": "^8.0.0",
+    "better-auth": "^1.0.0",
+    "hono": "^4.0.0",
+    "pg": "^8.0.0",
+    "redis": "^4.0.0",
+    "socket.io": "^4.0.0"
+  },
+  "devDependencies": {
+    "auth": "^1.7.12",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
+  }
+}

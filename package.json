@@ -1,0 +1,11 @@
+{
+  "name": "tether",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --parallel --filter @tether/web --filter @tether/chat dev",
+    "dev:web": "pnpm --filter @tether/web dev",
+    "dev:chat": "pnpm --filter @tether/chat dev",
+    "test": "pnpm --filter @tether/chat test",
+    "db:migrate": "pnpm --filter @tether/chat db:migrate"
+  }
+}
