@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { auth } from "./auth.js";
-import { createDeviceSessionService } from "./services/device-session.service.js";
+import { auth } from "../../auth.js";
+import { createDeviceSessionService } from "./device-session.service.js";
 
 type AuthApi = Pick<typeof auth.api, "getSession" | "listSessions" | "revokeSession">;
 

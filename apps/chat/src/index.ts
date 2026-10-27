@@ -1,8 +1,10 @@
 import { serve } from "@hono/node-server";
-import { auth, pool } from "./auth.js";
+import { auth } from "./auth.js";
+import { pool } from "./db.js";
 import { env } from "./env.js";
-import { registerDeviceSessionRoutes } from "./routes/device-session.routes.js";
-import { deviceSessionService } from "./services/device-session.service.js";
+import { registerChatRoutes } from "./modules/chat/chat.routes.js";
+import { registerDeviceSessionRoutes } from "./modules/device-sessions/device-session.routes.js";
+import { deviceSessionService } from "./modules/device-sessions/device-session.service.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { createClient } from "redis";
@@ -34,12 +36,16 @@ const io = new Server({
 });
 
 io.use(async (socket, next) => {
-  const session = await deviceSessionService.getCurrent(
-    new Headers(socket.request.headers as HeadersInit),
-  );
-  if (!session) return next(new Error("unauthorized"));
-  socket.data.sessionId = session.session.id;
-  next();
+  try {
+    const session = await deviceSessionService.getCurrent(
+      new Headers(socket.request.headers as HeadersInit),
+    );
+    if (!session) return next(new Error("unauthorized"));
+    socket.data.sessionId = session.session.id;
+    next();
+  } catch {
+    next(new Error("authentication unavailable"));
+  }
 });
 
 io.on("connection", (socket) => {
@@ -50,6 +56,7 @@ io.on("connection", (socket) => {
 registerDeviceSessionRoutes(app, (sessionId) => {
   io.in(`session:${sessionId}`).disconnectSockets(true);
 });
+registerChatRoutes(app);
 
 const httpServer = serve({
   fetch: app.fetch,

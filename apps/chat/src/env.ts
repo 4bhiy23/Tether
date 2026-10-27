@@ -1,29 +1,27 @@
-function required(value: string | undefined, name: string) {
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
+import { z } from "zod";
 
-function url(value: string | undefined, name: string) {
-  const result = required(value, name);
-  try {
-    new URL(result);
-    return result;
-  } catch {
-    throw new Error(`${name} must be a valid URL`);
-  }
-}
+const envSchema = z.object({
+  CHAT_PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
+  BETTER_AUTH_SECRET: z
+    .string()
+    .min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
+  DATABASE_URL: z
+    .url()
+    .refine((value) => ["postgres:", "postgresql:"].includes(new URL(value).protocol)),
+  REDIS_URL: z
+    .url()
+    .refine((value) => ["redis:", "rediss:"].includes(new URL(value).protocol)),
+  WEB_ORIGIN: z.url().default("http://localhost:3000"),
+});
 
 export function readEnv(source: NodeJS.ProcessEnv) {
-  const port = Number(source.CHAT_PORT ?? 4000);
-  const secret = required(source.BETTER_AUTH_SECRET, "BETTER_AUTH_SECRET");
-  if (secret.length < 32) throw new Error("BETTER_AUTH_SECRET must be at least 32 characters");
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("CHAT_PORT must be a valid port");
+  const values = envSchema.parse(source);
 
   return {
-    chatPort: port,
-    databaseUrl: url(source.DATABASE_URL, "DATABASE_URL"),
-    redisUrl: url(source.REDIS_URL, "REDIS_URL"),
-    webOrigin: url(source.WEB_ORIGIN ?? "http://localhost:3000", "WEB_ORIGIN"),
+    chatPort: values.CHAT_PORT,
+    databaseUrl: values.DATABASE_URL,
+    redisUrl: values.REDIS_URL,
+    webOrigin: values.WEB_ORIGIN,
   };
 }
 

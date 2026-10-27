@@ -13,14 +13,16 @@ export default function Home() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
+    const submitter = (event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
+    if (submitter?.value === "signup") {
+      if (!name.trim()) return setError("Name is required");
+      const result = await authClient.signUp.email({ name: name.trim(), email, password });
+      if (result.error) setError(result.error.message ?? "Unable to sign up");
+      return;
+    }
+
     const result = await authClient.signIn.email({ email, password });
     if (result.error) setError(result.error.message ?? "Unable to sign in");
-  }
-
-  async function signUp() {
-    setError("");
-    const result = await authClient.signUp.email({ name, email, password });
-    if (result.error) setError(result.error.message ?? "Unable to sign up");
   }
 
   if (isPending) return <main>Loading session…</main>;
@@ -28,5 +30,5 @@ export default function Home() {
     return <main><p>Signed in as {session.user.email}</p><button onClick={() => authClient.signOut()}>Sign out</button></main>;
   }
 
-  return <main><h1>Tether</h1><form onSubmit={submit}><input aria-label="Name" placeholder="Name (for sign up)" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Email" type="email" placeholder="Email" required value={email} onChange={(event) => setEmail(event.target.value)} /><input aria-label="Password" type="password" placeholder="Password" required value={password} onChange={(event) => setPassword(event.target.value)} /><button>Sign in</button><button type="button" onClick={signUp}>Sign up</button>{error && <p role="alert">{error}</p>}</form></main>;
+  return <main><h1>Tether</h1><form onSubmit={submit}><input aria-label="Name" placeholder="Name (for sign up)" value={name} onChange={(event) => setName(event.target.value)} /><input aria-label="Email" type="email" placeholder="Email" required value={email} onChange={(event) => setEmail(event.target.value)} /><input aria-label="Password" type="password" placeholder="Password" required value={password} onChange={(event) => setPassword(event.target.value)} /><button name="action" value="signin">Sign in</button><button name="action" value="signup">Sign up</button>{error && <p role="alert">{error}</p>}</form></main>;
 }

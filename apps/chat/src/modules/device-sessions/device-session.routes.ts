@@ -1,5 +1,5 @@
 import type { Hono } from "hono";
-import { createDeviceSessionController } from "../controllers/device-session.controller.js";
+import { createDeviceSessionController } from "./device-session.controller.js";
 
 export function registerDeviceSessionRoutes(
   app: Hono,

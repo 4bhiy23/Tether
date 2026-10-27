@@ -5,22 +5,26 @@
   "scripts": {
     "dev": "node --env-file=../../.env --import tsx --watch src/index.ts",
     "start": "node --env-file=../../.env --import tsx src/index.ts",
-    "test": "BETTER_AUTH_SECRET=01234567890123456789012345678901 DATABASE_URL=postgresql://tether:tether@localhost:5433/tether REDIS_URL=redis://localhost:6379 tsx --test src/*.test.ts",
-    "db:migrate": "node --env-file=../../.env ./node_modules/.bin/auth migrate --config src/auth.ts --yes"
+    "test": "export BETTER_AUTH_SECRET=t3st-N8qvL2xR7mK9pC4wF6yH1dS5jB0uG8aE3zT7 BETTER_AUTH_URL=http://localhost:4000 DATABASE_URL=postgresql://tether:tether@localhost:5433/tether REDIS_URL=redis://localhost:6379; pnpm db:migrate && tsx --test --test-concurrency=1 src/*.test.ts src/modules/*/*.test.ts",
+    "db:generate": "if [ -f ../../.env ]; then set -a; . ../../.env; set +a; fi; drizzle-kit generate",
+    "db:migrate": "if [ -f ../../.env ]; then set -a; . ../../.env; set +a; fi; auth migrate --config src/auth.ts --yes && drizzle-kit migrate"
   },
   "dependencies": {
     "@hono/node-server": "^1.0.0",
     "@socket.io/redis-adapter": "^8.0.0",
     "better-auth": "^1.0.0",
+    "drizzle-orm": "^0.45.2",
     "hono": "^4.0.0",
     "pg": "^8.0.0",
     "redis": "^4.0.0",
-    "socket.io": "^4.0.0"
+    "socket.io": "^4.0.0",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "auth": "^1.7.12",
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
+    "drizzle-kit": "^0.31.4",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }

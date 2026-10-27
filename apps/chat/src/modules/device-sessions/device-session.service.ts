@@ -1,4 +1,4 @@
-import { auth } from "../auth.js";
+import { auth } from "../../auth.js";
 
 type AuthApi = Pick<typeof auth.api, "getSession" | "listSessions" | "revokeSession">;
 

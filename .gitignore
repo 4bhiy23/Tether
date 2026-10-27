@@ -8,5 +8,4 @@ node_modules
 dist
 coverage
 skills-lock.json
-.agents
-skills-lock.json
+./superpowers
