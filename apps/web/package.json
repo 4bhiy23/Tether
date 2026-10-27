@@ -5,6 +5,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "test": "tsx --test lib/*.test.ts",
     "lint": "eslint"
   },
   "dependencies": {
@@ -18,6 +19,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }
 }

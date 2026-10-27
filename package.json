@@ -1,11 +1,13 @@
 {
   "name": "tether",
   "private": true,
+  "packageManager": "pnpm@11.12.0",
   "scripts": {
     "dev": "pnpm --parallel --filter @tether/web --filter @tether/chat dev",
     "dev:web": "pnpm --filter @tether/web dev",
     "dev:chat": "pnpm --filter @tether/chat dev",
-    "test": "pnpm --filter @tether/chat test",
+    "test": "pnpm --filter @tether/chat --filter @tether/web test",
+    "test:integration": "sh -c 'trap \"docker compose -p tether-integration --profile test down -v\" EXIT; BETTER_AUTH_SECRET=integration-test-secret-at-least-32-characters CHAT_PROXY_PORT=0 POSTGRES_PORT=0 REDIS_PORT=0 docker compose -p tether-integration --profile test up --build --abort-on-container-exit --exit-code-from integration-test integration-test'",
     "db:migrate": "pnpm --filter @tether/chat db:migrate"
   }
 }

@@ -40,6 +40,27 @@ export function createChatService(database: Database = db) {
   }
 
   return {
+    async getConversationAccess(userId: string, conversationId: string) {
+      const [conversation] = await database
+        .select({ id: conversations.id })
+        .from(conversations)
+        .where(eq(conversations.id, conversationId))
+        .limit(1);
+      if (!conversation) return { status: "not-found" } as const;
+
+      const [membership] = await database
+        .select({ userId: conversationMembers.userId })
+        .from(conversationMembers)
+        .where(
+          and(
+            eq(conversationMembers.conversationId, conversationId),
+            eq(conversationMembers.userId, userId),
+          ),
+        )
+        .limit(1);
+      return membership ? ({ status: "member" } as const) : ({ status: "forbidden" } as const);
+    },
+
     async createConversation(
       userId: string,
       input: { kind: "direct" | "group"; title?: string; memberIds: string[] },

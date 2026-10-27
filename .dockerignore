@@ -1,0 +1,13 @@
+.git
+.agents
+.env
+.env.*
+!.env.example
+.pnpm-store
+node_modules
+**/node_modules
+**/.next
+**/dist
+**/coverage
+**/*.tsbuildinfo
+skills-lock.json

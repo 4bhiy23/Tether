@@ -1,7 +1,8 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { authClient } from "../lib/auth-client";
+import { connectLiveEvents } from "../lib/live-socket";
 
 export default function Home() {
   const { data: session, isPending } = authClient.useSession();
@@ -9,6 +10,13 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!session) return;
+
+    const liveEvents = connectLiveEvents();
+    return () => liveEvents.close();
+  }, [session?.session.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

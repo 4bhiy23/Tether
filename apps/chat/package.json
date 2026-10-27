@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file=../../.env --import tsx --watch src/index.ts",
-    "start": "node --env-file=../../.env --import tsx src/index.ts",
+    "start": "node --import tsx src/index.ts",
     "test": "export BETTER_AUTH_SECRET=t3st-N8qvL2xR7mK9pC4wF6yH1dS5jB0uG8aE3zT7 BETTER_AUTH_URL=http://localhost:4000 DATABASE_URL=postgresql://tether:tether@localhost:5433/tether REDIS_URL=redis://localhost:6379; pnpm db:migrate && tsx --test --test-concurrency=1 src/*.test.ts src/modules/*/*.test.ts",
     "db:generate": "if [ -f ../../.env ]; then set -a; . ../../.env; set +a; fi; drizzle-kit generate",
     "db:migrate": "if [ -f ../../.env ]; then set -a; . ../../.env; set +a; fi; auth migrate --config src/auth.ts --yes && drizzle-kit migrate"
@@ -25,6 +25,7 @@
     "@types/node": "^22.0.0",
     "@types/pg": "^8.0.0",
     "drizzle-kit": "^0.31.4",
+    "socket.io-client": "^4.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }

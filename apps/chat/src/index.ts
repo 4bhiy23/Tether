@@ -5,27 +5,16 @@ import { env } from "./env.js";
 import { registerChatRoutes } from "./modules/chat/chat.routes.js";
 import { registerDeviceSessionRoutes } from "./modules/device-sessions/device-session.routes.js";
 import { deviceSessionService } from "./modules/device-sessions/device-session.service.js";
+import { startOutboxPublisher } from "./modules/outbox/outbox.publisher.js";
+import { createRealtime } from "./modules/realtime/realtime.js";
+import { socketController } from "./modules/realtime/socket.controller.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { createClient } from "redis";
 import { Server } from "socket.io";
-
-const redis = createClient({ url: env.redisUrl });
-redis.on("error", (error) => console.error("Redis error", error));
-void redis.connect().catch(() => undefined);
 
 const app = new Hono();
 app.use("*", cors({ origin: env.webOrigin, credentials: true }));
 app.all("/api/auth/*", (c) => auth.handler(c.req.raw));
-
-app.get("/health", async (c) => {
-  try {
-    await Promise.all([pool.query("select 1"), redis.ping()]);
-    return c.json({ ok: true });
-  } catch {
-    return c.json({ ok: false }, 503);
-  }
-});
 
 const io = new Server({
   transports: ["websocket"],
@@ -33,6 +22,16 @@ const io = new Server({
     origin: env.webOrigin,
     credentials: true,
   },
+});
+const realtime = createRealtime(io, env.redisUrl);
+
+app.get("/health", async (c) => {
+  try {
+    await Promise.all([pool.query("select 1"), realtime.ping()]);
+    return c.json({ ok: true });
+  } catch {
+    return c.json({ ok: false }, 503);
+  }
 });
 
 io.use(async (socket, next) => {
@@ -42,6 +41,7 @@ io.use(async (socket, next) => {
     );
     if (!session) return next(new Error("unauthorized"));
     socket.data.sessionId = session.session.id;
+    socket.data.userId = session.user.id;
     next();
   } catch {
     next(new Error("authentication unavailable"));
@@ -49,8 +49,7 @@ io.use(async (socket, next) => {
 });
 
 io.on("connection", (socket) => {
-  socket.join(`session:${socket.data.sessionId}`);
-  socket.emit("chat.ready");
+  void socketController.connected(socket).catch(() => socket.disconnect(true));
 });
 
 registerDeviceSessionRoutes(app, (sessionId) => {
@@ -58,9 +57,54 @@ registerDeviceSessionRoutes(app, (sessionId) => {
 });
 registerChatRoutes(app);
 
-const httpServer = serve({
-  fetch: app.fetch,
-  port: env.chatPort,
-});
+async function start() {
+  const abortPublisher = new AbortController();
+  let publisher: Promise<void> | undefined;
+  let httpServer: ReturnType<typeof serve> | undefined;
+  let stopping: Promise<void> | undefined;
 
-io.attach(httpServer);
+  function stop(exitCode?: number) {
+    if (exitCode !== undefined) process.exitCode = exitCode;
+    if (stopping) return stopping;
+
+    stopping = (async () => {
+      abortPublisher.abort();
+      await publisher?.catch(() => undefined);
+      await Promise.allSettled([io.close()]);
+      if (httpServer?.listening) {
+        await new Promise<void>((resolve) => httpServer?.close(() => resolve()));
+      }
+      await Promise.allSettled([realtime.close(), pool.end()]);
+    })();
+
+    return stopping;
+  }
+
+  try {
+    await realtime.start();
+
+    publisher = startOutboxPublisher({
+      publish: (channel, payload) => realtime.publish(channel, payload),
+      signal: abortPublisher.signal,
+      onError: () => console.error("Outbox publisher error"),
+    });
+
+    httpServer = serve({
+      fetch: app.fetch,
+      port: env.chatPort,
+    });
+    httpServer.once("error", () => {
+      console.error("Chat server failed");
+      void stop(1);
+    });
+    io.attach(httpServer);
+
+    process.once("SIGINT", () => void stop());
+    process.once("SIGTERM", () => void stop());
+  } catch {
+    console.error("Chat startup failed");
+    await stop(1);
+  }
+}
+
+void start();

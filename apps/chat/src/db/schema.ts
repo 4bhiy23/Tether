@@ -1,6 +1,7 @@
 import {
   bigint,
   check,
+  index,
   jsonb,
   pgTable,
   primaryKey,
@@ -99,5 +100,10 @@ export const outboxEvents = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     publishedAt: timestamp("published_at", { withTimezone: true }),
   },
-  (table) => [unique("outbox_events_message_unique").on(table.messageId)],
+  (table) => [
+    unique("outbox_events_message_unique").on(table.messageId),
+    index("outbox_events_pending_created_at_idx")
+      .on(table.createdAt)
+      .where(sql`${table.publishedAt} is null`),
+  ],
 );

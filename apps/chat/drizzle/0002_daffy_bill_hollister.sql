@@ -1,0 +1,1 @@
+CREATE INDEX "outbox_events_pending_created_at_idx" ON "outbox_events" USING btree ("created_at") WHERE "outbox_events"."published_at" is null;

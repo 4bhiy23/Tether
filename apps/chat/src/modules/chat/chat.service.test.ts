@@ -39,6 +39,13 @@ test("writes messages, account events, and outbox records atomically and idempot
     conversationIds.push(direct.id);
     assert.equal(duplicateDirectResult.conversation.id, direct.id);
     assert.deepEqual(direct.memberIds, [alice, bob].sort());
+    assert.deepEqual(await chat.getConversationAccess(alice, direct.id), { status: "member" });
+    assert.deepEqual(await chat.getConversationAccess(outsider, direct.id), {
+      status: "forbidden",
+    });
+    assert.deepEqual(await chat.getConversationAccess(alice, randomUUID()), {
+      status: "not-found",
+    });
 
     const groupResult = await chat.createConversation(alice, {
       kind: "group",
