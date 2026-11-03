@@ -18,6 +18,10 @@ test("validates chat inputs before calling services", async () => {
       calls.push(args);
       return { status: "sent", message: {}, replayed: false };
     },
+    listMessages: async (...args: unknown[]) => {
+      calls.push(args);
+      return { status: "found", messages: [], nextBeforeSequence: null, hasMore: false };
+    },
   } as unknown as ChatService;
   const sessions = {
     getCurrent: async () => ({ user: { id: userId } }),
@@ -26,6 +30,7 @@ test("validates chat inputs before calling services", async () => {
   const app = new Hono();
   app.post("/api/conversations", controller.createConversation);
   app.post("/api/conversations/:id/messages", controller.sendMessage);
+  app.get("/api/conversations/:id/messages", controller.listMessages);
 
   const duplicateMembers = await app.request("/api/conversations", {
     method: "POST",
@@ -37,9 +42,13 @@ test("validates chat inputs before calling services", async () => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clientMessageId: randomUUID(), content: "hello" }),
   });
+  const invalidHistory = await app.request(
+    `/api/conversations/${randomUUID()}/messages?beforeSequence=0&limit=101`,
+  );
 
   assert.equal(duplicateMembers.status, 400);
   assert.equal(invalidMessage.status, 400);
+  assert.equal(invalidHistory.status, 400);
   assert.deepEqual(calls, []);
 });
 
@@ -55,6 +64,10 @@ test("normalizes titles without changing message content", async () => {
     sendMessage: async (...args: unknown[]) => {
       calls.push(args);
       return { status: "sent", message: {}, replayed: false };
+    },
+    listMessages: async (...args: unknown[]) => {
+      calls.push(args);
+      return { status: "found", messages: [], nextBeforeSequence: null, hasMore: false };
     },
   } as unknown as ChatService;
   const sessions = {
@@ -97,4 +110,51 @@ test("normalizes titles without changing message content", async () => {
     conversationId,
     { clientMessageId, content: "  hello  " },
   ]);
+});
+
+test("authenticates and maps message history results", async () => {
+  const userId = randomUUID();
+  const conversationId = randomUUID();
+  const calls: unknown[] = [];
+  let status: "found" | "forbidden" | "not-found" = "found";
+  const chats = {
+    listMessages: async (...args: unknown[]) => {
+      calls.push(args);
+      if (status !== "found") return { status };
+      return { status, messages: [{ id: "message" }], nextBeforeSequence: 3, hasMore: true };
+    },
+  } as unknown as ChatService;
+  const sessions = {
+    getCurrent: async () => ({ user: { id: userId } }),
+  } as unknown as DeviceSessionService;
+  const controller = createChatController(chats, sessions);
+  const app = new Hono();
+  app.get("/api/conversations/:id/messages", controller.listMessages);
+
+  const response = await app.request(
+    `/api/conversations/${conversationId}/messages?beforeSequence=5&limit=2`,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    messages: [{ id: "message" }],
+    nextBeforeSequence: 3,
+    hasMore: true,
+  });
+  assert.deepEqual(calls, [[userId, conversationId, { beforeSequence: 5, limit: 2 }]]);
+
+  status = "forbidden";
+  assert.equal((await app.request(`/api/conversations/${conversationId}/messages`)).status, 403);
+  status = "not-found";
+  assert.equal((await app.request(`/api/conversations/${conversationId}/messages`)).status, 404);
+
+  const unauthenticated = createChatController(
+    chats,
+    { getCurrent: async () => null } as unknown as DeviceSessionService,
+  );
+  const protectedApp = new Hono();
+  protectedApp.get("/api/conversations/:id/messages", unauthenticated.listMessages);
+  assert.equal(
+    (await protectedApp.request(`/api/conversations/${conversationId}/messages`)).status,
+    401,
+  );
 });

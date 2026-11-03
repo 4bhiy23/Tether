@@ -1,37 +1,20 @@
-const rememberedIdLimit = 1_000;
+import { accountEventSchema, messageSchema, type AccountEvent, type Message } from "./chat-types";
 
-function remember(ids: Set<string>, id: string) {
-  if (ids.has(id)) return false;
-
-  ids.add(id);
-  if (ids.size > rememberedIdLimit) {
-    ids.delete(ids.values().next().value!);
-  }
-  return true;
-}
-
-export function createLiveEventConsumer<
-  Message extends { id: string },
-  AccountEvent extends { id: string; payload: Message },
->(callbacks: {
-  onMessage: (message: Message) => void;
-  onAccountEvent: (event: AccountEvent) => void;
+export function createLiveEventConsumer(callbacks: {
+  onMessage: (message: Message) => void | Promise<void>;
+  onAccountEvent: (event: AccountEvent) => void | Promise<void>;
 }) {
-  const messageIds = new Set<string>();
-  const accountEventIds = new Set<string>();
-
-  function messageCreated(message: Message) {
-    if (!remember(messageIds, message.id)) return false;
-    callbacks.onMessage(message);
-    return true;
-  }
-
   return {
-    messageCreated,
-    accountEvent(event: AccountEvent) {
-      if (!remember(accountEventIds, event.id)) return false;
-      callbacks.onAccountEvent(event);
-      messageCreated(event.payload);
+    async messageCreated(input: unknown) {
+      const parsed = messageSchema.safeParse(input);
+      if (!parsed.success) return false;
+      await callbacks.onMessage(parsed.data);
+      return true;
+    },
+    async accountEvent(input: unknown) {
+      const parsed = accountEventSchema.safeParse(input);
+      if (!parsed.success) return false;
+      await callbacks.onAccountEvent(parsed.data);
       return true;
     },
   };

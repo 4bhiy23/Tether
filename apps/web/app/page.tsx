@@ -14,8 +14,15 @@ export default function Home() {
   useEffect(() => {
     if (!session) return;
 
-    const liveEvents = connectLiveEvents();
-    return () => liveEvents.close();
+    let closed = false;
+    const liveEvents = connectLiveEvents(session.user.id);
+    void liveEvents.then((connection) => {
+      if (closed) connection.close();
+    }).catch(() => undefined);
+    return () => {
+      closed = true;
+      void liveEvents.then((connection) => connection.close()).catch(() => undefined);
+    };
   }, [session?.session.id]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {

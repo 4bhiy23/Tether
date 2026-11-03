@@ -114,6 +114,21 @@ test("writes messages, account events, and outbox records atomically and idempot
         { userId: bob, sequence: 1 },
       ].sort((a, b) => a.userId.localeCompare(b.userId)),
     );
+    for (const event of events) {
+      assert.deepEqual(event.payload, {
+        message: {
+          ...storedMessages[0],
+          createdAt: storedMessages[0].createdAt.toISOString(),
+        },
+        conversation: {
+          id: direct.id,
+          kind: direct.kind,
+          title: direct.title,
+          createdAt: direct.createdAt.toISOString(),
+          memberIds: [alice, bob].sort(),
+        },
+      });
+    }
     assert.equal(
       (await db.select().from(outboxEvents).where(eq(outboxEvents.messageId, storedMessages[0].id)))
         .length,
@@ -126,6 +141,57 @@ test("writes messages, account events, and outbox records atomically and idempot
       }),
       { status: "idempotency-conflict" },
     );
+
+    for (let index = 2; index <= 5; index += 1) {
+      const result = await chat.sendMessage(alice, direct.id, {
+        clientMessageId: randomUUID(),
+        content: `message ${index}`,
+      });
+      assert.equal(result.status, "sent");
+    }
+    assert.deepEqual(
+      await chat.listMessages(alice, direct.id, { limit: 2 }),
+      {
+        status: "found",
+        messages: (await db.select().from(messages).where(eq(messages.conversationId, direct.id)))
+          .filter(({ sequence }) => sequence >= 4)
+          .sort((left, right) => left.sequence - right.sequence),
+        nextBeforeSequence: 4,
+        hasMore: true,
+      },
+    );
+    const older = await chat.listMessages(alice, direct.id, {
+      beforeSequence: 4,
+      limit: 2,
+    });
+    assert.equal(older.status, "found");
+    if (older.status === "found") {
+      assert.deepEqual(
+        older.messages.map(({ sequence }) => sequence),
+        [2, 3],
+      );
+      assert.equal(older.nextBeforeSequence, 2);
+      assert.equal(older.hasMore, true);
+    }
+    const oldest = await chat.listMessages(alice, direct.id, {
+      beforeSequence: 2,
+      limit: 2,
+    });
+    assert.equal(oldest.status, "found");
+    if (oldest.status === "found") {
+      assert.deepEqual(
+        oldest.messages.map(({ sequence }) => sequence),
+        [1],
+      );
+      assert.equal(oldest.nextBeforeSequence, null);
+      assert.equal(oldest.hasMore, false);
+    }
+    assert.deepEqual(await chat.listMessages(outsider, direct.id, { limit: 50 }), {
+      status: "forbidden",
+    });
+    assert.deepEqual(await chat.listMessages(alice, randomUUID(), { limit: 50 }), {
+      status: "not-found",
+    });
 
     const eventCountBeforeFailure = (
       await db.select().from(accountEvents).where(eq(accountEvents.conversationId, direct.id))
@@ -159,7 +225,7 @@ test("writes messages, account events, and outbox records atomically and idempot
       .select()
       .from(conversations)
       .where(eq(conversations.id, direct.id));
-    assert.equal(storedConversation.nextMessageSequence, 1);
+    assert.equal(storedConversation.nextMessageSequence, 5);
     assert.equal(
       (await db.select().from(accountEvents).where(eq(accountEvents.conversationId, direct.id)))
         .length,

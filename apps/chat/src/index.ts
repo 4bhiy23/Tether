@@ -8,6 +8,7 @@ import { deviceSessionService } from "./modules/device-sessions/device-session.s
 import { startOutboxPublisher } from "./modules/outbox/outbox.publisher.js";
 import { createRealtime } from "./modules/realtime/realtime.js";
 import { socketController } from "./modules/realtime/socket.controller.js";
+import { registerSyncRoutes } from "./modules/sync/sync.routes.js";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { Server } from "socket.io";
@@ -56,6 +57,7 @@ registerDeviceSessionRoutes(app, (sessionId) => {
   io.in(`session:${sessionId}`).disconnectSockets(true);
 });
 registerChatRoutes(app);
+registerSyncRoutes(app);
 
 async function start() {
   const abortPublisher = new AbortController();

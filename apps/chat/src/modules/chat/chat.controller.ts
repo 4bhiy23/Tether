@@ -22,6 +22,10 @@ const sendMessageBody = z.object({
     .max(10_000)
     .refine((value) => value.trim().length > 0),
 });
+const messageHistoryQuery = z.object({
+  beforeSequence: z.coerce.number().int().safe().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 
 async function body<T>(c: Context, schema: z.ZodType<T>) {
   const result = schema.safeParse(await c.req.json().catch(() => null));
@@ -68,6 +72,22 @@ export function createChatController(
       if (result.status === "forbidden") throw new HTTPException(403);
       if (result.status === "idempotency-conflict") throw new HTTPException(409);
       return c.json(result.message, result.replayed ? 200 : 201);
+    },
+
+    listMessages: async (c: Context) => {
+      const userId = await currentUserId(c);
+      const conversationId = z.uuid().safeParse(c.req.param("id"));
+      const query = messageHistoryQuery.safeParse(c.req.query());
+      if (!conversationId.success || !query.success) throw new HTTPException(400);
+
+      const result = await chats.listMessages(userId, conversationId.data, query.data);
+      if (result.status === "not-found") throw new HTTPException(404);
+      if (result.status === "forbidden") throw new HTTPException(403);
+      return c.json({
+        messages: result.messages,
+        nextBeforeSequence: result.nextBeforeSequence,
+        hasMore: result.hasMore,
+      });
     },
   };
 }

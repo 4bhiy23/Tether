@@ -50,6 +50,16 @@ test("publishes pending outbox rows atomically and claims them once", async () =
         content,
       })
       .returning();
+    const eventPayload = {
+      message,
+      conversation: {
+        id: conversation.id,
+        kind: conversation.kind,
+        title: conversation.title,
+        createdAt: conversation.createdAt,
+        memberIds: [alice, bob].sort(),
+      },
+    };
     await db.insert(accountEvents).values([
       {
         userId: alice,
@@ -57,7 +67,7 @@ test("publishes pending outbox rows atomically and claims them once", async () =
         type: "message.created",
         conversationId: conversation.id,
         messageId: message.id,
-        payload: message,
+        payload: eventPayload,
       },
       {
         userId: bob,
@@ -65,7 +75,7 @@ test("publishes pending outbox rows atomically and claims them once", async () =
         type: "message.created",
         conversationId: conversation.id,
         messageId: message.id,
-        payload: message,
+        payload: eventPayload,
       },
     ]);
     const [outbox] = await db
@@ -96,6 +106,15 @@ test("publishes pending outbox rows atomically and claims them once", async () =
     const envelope = outboxEnvelopeSchema.parse(JSON.parse(publishedPayload));
     assert.equal(envelope.outboxId, retryable.id);
     assert.equal(envelope.accountEvents.length, 2);
+    for (const event of envelope.accountEvents) {
+      const payload = event.payload as {
+        message: { id: string };
+        conversation: { id: string; memberIds: string[] };
+      };
+      assert.equal(payload.message.id, envelope.message.id);
+      assert.equal(payload.conversation.id, envelope.message.conversationId);
+      assert.deepEqual(payload.conversation.memberIds, [alice, bob].sort());
+    }
     assert.ok(
       (await db.select().from(outboxEvents).where(eq(outboxEvents.id, retryable.id)))[0]
         .publishedAt,

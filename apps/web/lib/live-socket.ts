@@ -2,53 +2,53 @@
 
 import { io } from "socket.io-client";
 import { chatUrl } from "./auth-client";
+import { openChatStore } from "./chat-store";
+import { createChatSyncCoordinator, startForegroundSync } from "./chat-sync";
 import { createLiveEventConsumer } from "./live-events";
 
-export type LiveMessage = {
-  id: string;
-  conversationId: string;
-  sequence: number;
-  senderId: string;
-  clientMessageId: string;
-  content: string;
-  createdAt: string;
-};
-
-export type LiveAccountEvent = {
-  id: string;
-  userId: string;
-  sequence: number;
-  type: "message.created";
-  conversationId: string;
-  messageId: string;
-  payload: LiveMessage;
-  createdAt: string;
-};
-
-export function connectLiveEvents() {
-  const messages = new Map<string, LiveMessage>();
-  const accountEvents = new Map<string, LiveAccountEvent>();
-  const consumer = createLiveEventConsumer<LiveMessage, LiveAccountEvent>({
-    onMessage: (message) => messages.set(message.id, message),
-    onAccountEvent: (event) => accountEvents.set(event.id, event),
+export async function connectLiveEvents(userId: string) {
+  const abort = new AbortController();
+  const store = await openChatStore(userId);
+  const coordinator = createChatSyncCoordinator({
+    baseUrl: chatUrl,
+    store,
+    signal: abort.signal,
+  });
+  const consumer = createLiveEventConsumer({
+    onMessage: coordinator.roomMessage,
+    onAccountEvent: coordinator.accountEvent,
   });
   const socket = io(chatUrl, {
+    autoConnect: false,
     transports: ["websocket"],
     withCredentials: true,
   });
-
-  socket.on("message.created", consumer.messageCreated);
-  socket.on("account.event", consumer.accountEvent);
-
-  return {
-    messages,
-    accountEvents,
-    close() {
-      socket.off("message.created", consumer.messageCreated);
-      socket.off("account.event", consumer.accountEvent);
-      socket.disconnect();
-      messages.clear();
-      accountEvents.clear();
-    },
+  const messageCreated = (input: unknown) => {
+    void consumer.messageCreated(input).catch(() => console.error("Live message handling failed"));
   };
+  const accountEvent = (input: unknown) => {
+    void consumer.accountEvent(input).catch(() => console.error("Account event handling failed"));
+  };
+  const connected = () => {
+    void coordinator.initialize().catch(() => console.error("Chat initialization failed"));
+  };
+
+  socket.on("message.created", messageCreated);
+  socket.on("account.event", accountEvent);
+  socket.on("connect", connected);
+  socket.connect();
+
+  const stopForegroundSync = startForegroundSync({ synchronize: coordinator.initialize });
+  function close() {
+    abort.abort();
+    stopForegroundSync();
+    socket.off("message.created", messageCreated);
+    socket.off("account.event", accountEvent);
+    socket.off("connect", connected);
+    socket.disconnect();
+    store.close();
+  }
+
+  void coordinator.initialize().catch(() => console.error("Chat initialization failed"));
+  return { close };
 }

@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lt, sql } from "drizzle-orm";
 import { db } from "../../db.js";
 import {
   accountEvents,
@@ -127,7 +127,12 @@ export function createChatService(database: Database = db) {
       try {
         return await database.transaction(async (tx) => {
           const [conversation] = await tx
-            .select({ id: conversations.id })
+            .select({
+              id: conversations.id,
+              kind: conversations.kind,
+              title: conversations.title,
+              createdAt: conversations.createdAt,
+            })
             .from(conversations)
             .where(eq(conversations.id, conversationId))
             .for("update")
@@ -184,6 +189,13 @@ export function createChatService(database: Database = db) {
             .from(conversationMembers)
             .where(eq(conversationMembers.conversationId, conversationId))
             .orderBy(conversationMembers.userId);
+          const eventPayload = {
+            message,
+            conversation: {
+              ...conversation,
+              memberIds: members.map(({ userId: memberId }) => memberId),
+            },
+          };
           await tx
             .insert(userSyncState)
             .values(members.map(({ userId: memberId }) => ({ userId: memberId })))
@@ -201,7 +213,7 @@ export function createChatService(database: Database = db) {
               type: "message.created",
               conversationId,
               messageId: message.id,
-              payload: message,
+              payload: eventPayload,
             });
           }
 
@@ -220,6 +232,64 @@ export function createChatService(database: Database = db) {
           ? ({ status: "sent", message, replayed: true } as const)
           : ({ status: "idempotency-conflict" } as const);
       }
+    },
+
+    async listMessages(
+      userId: string,
+      conversationId: string,
+      input: { beforeSequence?: number; limit: number },
+    ) {
+      return database.transaction(async (tx) => {
+        const [conversation] = await tx
+          .select({ id: conversations.id })
+          .from(conversations)
+          .where(eq(conversations.id, conversationId))
+          .limit(1);
+        if (!conversation) return { status: "not-found" } as const;
+
+        const [membership] = await tx
+          .select({ userId: conversationMembers.userId })
+          .from(conversationMembers)
+          .where(
+            and(
+              eq(conversationMembers.conversationId, conversationId),
+              eq(conversationMembers.userId, userId),
+            ),
+          )
+          .for("key share")
+          .limit(1);
+        if (!membership) return { status: "forbidden" } as const;
+
+        const rows = await tx
+          .select({ message: messages })
+          .from(messages)
+          .innerJoin(
+            conversationMembers,
+            and(
+              eq(conversationMembers.conversationId, messages.conversationId),
+              eq(conversationMembers.userId, userId),
+            ),
+          )
+          .where(
+            and(
+              eq(messages.conversationId, conversationId),
+              input.beforeSequence === undefined
+                ? undefined
+                : lt(messages.sequence, input.beforeSequence),
+            ),
+          )
+          .orderBy(desc(messages.sequence))
+          .limit(input.limit + 1);
+        const hasMore = rows.length > input.limit;
+        const page = rows.slice(0, input.limit).map(({ message }) => message).reverse();
+
+        return {
+          status: "found",
+          messages: page,
+          nextBeforeSequence: hasMore ? page[0]?.sequence ?? null : null,
+          hasMore,
+        } as const;
+      });
     },
   };
 }

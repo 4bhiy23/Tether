@@ -1,55 +1,72 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { createLiveEventConsumer } from "./live-events.js";
+import type { AccountEvent, Conversation, Message } from "./chat-types";
+import { createLiveEventConsumer } from "./live-events";
 
-type Message = { id: string; content: string };
-type AccountEvent = { id: string; payload: Message };
+const createdAt = "2026-11-03T10:00:00.000Z";
 
-function consumer() {
-  const messages: Message[] = [];
-  const accountEvents: AccountEvent[] = [];
-  return {
-    accountEvents,
-    messages,
-    live: createLiveEventConsumer<Message, AccountEvent>({
-      onMessage: (message) => messages.push(message),
-      onAccountEvent: (event) => accountEvents.push(event),
-    }),
+function records() {
+  const conversation: Conversation = {
+    id: randomUUID(),
+    kind: "direct",
+    title: null,
+    memberIds: ["alice", "bob"],
+    createdAt,
   };
+  const message: Message = {
+    id: randomUUID(),
+    conversationId: conversation.id,
+    sequence: 1,
+    senderId: "alice",
+    clientMessageId: randomUUID(),
+    content: "hello",
+    createdAt,
+  };
+  const event: AccountEvent = {
+    id: randomUUID(),
+    userId: "bob",
+    sequence: 1,
+    type: "message.created",
+    conversationId: conversation.id,
+    messageId: message.id,
+    payload: { conversation, message },
+    createdAt,
+  };
+  return { event, message };
 }
 
-test("delivers one message when room and account events overlap", () => {
-  const { accountEvents, live, messages } = consumer();
-  const message = { id: "message-1", content: "hello" };
+test("validates live messages and account events before dispatch", async () => {
+  const messages: Message[] = [];
+  const events: AccountEvent[] = [];
+  const consumer = createLiveEventConsumer({
+    onMessage: (message) => {
+      messages.push(message);
+    },
+    onAccountEvent: (event) => {
+      events.push(event);
+    },
+  });
+  const { event, message } = records();
 
-  assert.equal(live.messageCreated(message), true);
-  assert.equal(live.accountEvent({ id: "event-1", payload: message }), true);
-
+  assert.equal(await consumer.messageCreated(message), true);
+  assert.equal(await consumer.accountEvent(event), true);
   assert.deepEqual(messages, [message]);
-  assert.deepEqual(accountEvents, [{ id: "event-1", payload: message }]);
+  assert.deepEqual(events, [event]);
 });
 
-test("ignores a repeated account event", () => {
-  const { accountEvents, live, messages } = consumer();
-  const event = {
-    id: "event-1",
-    payload: { id: "message-1", content: "hello" },
-  };
+test("rejects malformed live payloads", async () => {
+  let calls = 0;
+  const consumer = createLiveEventConsumer({
+    onMessage: () => {
+      calls += 1;
+    },
+    onAccountEvent: () => {
+      calls += 1;
+    },
+  });
 
-  assert.equal(live.accountEvent(event), true);
-  assert.equal(live.accountEvent(event), false);
-
-  assert.deepEqual(messages, [event.payload]);
-  assert.deepEqual(accountEvents, [event]);
-});
-
-test("evicts the oldest remembered IDs after 1,000 entries", () => {
-  const { live, messages } = consumer();
-
-  for (let index = 0; index <= 1_000; index += 1) {
-    live.messageCreated({ id: `message-${index}`, content: "hello" });
-  }
-
-  assert.equal(live.messageCreated({ id: "message-0", content: "hello" }), true);
-  assert.equal(messages.length, 1_002);
+  assert.equal(await consumer.messageCreated({ id: "invalid" }), false);
+  assert.equal(await consumer.accountEvent({ sequence: 1 }), false);
+  assert.equal(calls, 0);
 });
