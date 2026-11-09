@@ -41,6 +41,7 @@ test("dispatches a valid outbox envelope to local conversation and user rooms", 
       io,
       JSON.stringify({
         version: 1,
+        type: "message.created",
         outboxId: "00000000-0000-4000-8000-000000000005",
         message,
         accountEvents: [accountEvent],
@@ -52,6 +53,43 @@ test("dispatches a valid outbox envelope to local conversation and user rooms", 
     [`conversation:${message.conversationId}`, "message.created", message],
     ["user:bob", "account.event", accountEvent],
   ]);
+});
+
+test("dispatches read events only to the account room", () => {
+  const calls: unknown[][] = [];
+  const io = {
+    local: {
+      to(room: string) {
+        return { emit: (event: string, payload: unknown) => calls.push([room, event, payload]) };
+      },
+    },
+  } as unknown as Server;
+  const accountEvent = {
+    id: "00000000-0000-4000-8000-000000000004",
+    userId: "bob",
+    sequence: 2,
+    type: "conversation.read",
+    conversationId: "00000000-0000-4000-8000-000000000002",
+    messageId: null,
+    payload: {
+      conversationId: "00000000-0000-4000-8000-000000000002",
+      lastReadSequence: 1,
+    },
+    createdAt: "2026-10-27T00:00:00.000Z",
+  };
+  assert.equal(
+    dispatchOutboxEnvelope(
+      io,
+      JSON.stringify({
+        version: 1,
+        type: "conversation.read",
+        outboxId: "00000000-0000-4000-8000-000000000005",
+        accountEvent,
+      }),
+    ),
+    true,
+  );
+  assert.deepEqual(calls, [["user:bob", "account.event", accountEvent]]);
 });
 
 test("rejects malformed outbox envelopes", () => {

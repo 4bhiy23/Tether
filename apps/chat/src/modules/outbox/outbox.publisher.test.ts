@@ -58,6 +58,10 @@ test("publishes pending outbox rows atomically and claims them once", async () =
         title: conversation.title,
         createdAt: conversation.createdAt,
         memberIds: [alice, bob].sort(),
+        members: [
+          { id: alice, name: "Alice", email: `${alice}@test.invalid` },
+          { id: bob, name: "Bob", email: `${bob}@test.invalid` },
+        ].sort((left, right) => left.id.localeCompare(right.id)),
       },
     };
     await db.insert(accountEvents).values([
@@ -104,6 +108,8 @@ test("publishes pending outbox rows atomically and claims them once", async () =
       1,
     );
     const envelope = outboxEnvelopeSchema.parse(JSON.parse(publishedPayload));
+    assert.equal(envelope.type, "message.created");
+    if (envelope.type !== "message.created") return;
     assert.equal(envelope.outboxId, retryable.id);
     assert.equal(envelope.accountEvents.length, 2);
     for (const event of envelope.accountEvents) {
@@ -119,6 +125,41 @@ test("publishes pending outbox rows atomically and claims them once", async () =
       (await db.select().from(outboxEvents).where(eq(outboxEvents.id, retryable.id)))[0]
         .publishedAt,
     );
+
+    const [readEvent] = await db
+      .insert(accountEvents)
+      .values({
+        userId: bob,
+        sequence: 100,
+        type: "conversation.read",
+        conversationId: envelope.message.conversationId,
+        messageId: null,
+        payload: { conversationId: envelope.message.conversationId, lastReadSequence: 1 },
+      })
+      .returning();
+    const [readOutbox] = await db
+      .insert(outboxEvents)
+      .values({
+        type: "conversation.read",
+        messageId: null,
+        accountEventId: readEvent.id,
+        payload: readEvent.payload,
+      })
+      .returning();
+    let readPayload = "";
+    assert.equal(
+      await publishOutboxBatch(async (_channel, payload) => {
+        readPayload = payload;
+        return 1;
+      }),
+      1,
+    );
+    const readEnvelope = outboxEnvelopeSchema.parse(JSON.parse(readPayload));
+    assert.equal(readEnvelope.type, "conversation.read");
+    if (readEnvelope.type === "conversation.read") {
+      assert.equal(readEnvelope.outboxId, readOutbox.id);
+      assert.deepEqual(readEnvelope.accountEvent.payload, readEvent.payload);
+    }
 
     await addPendingMessage("claim me once");
     let releaseFirst!: () => void;

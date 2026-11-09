@@ -16,6 +16,8 @@ test("parses and validates environment values", () => {
 
   assert.deepEqual(readEnv(source), {
     chatPort: 4001,
+    instanceId: "local",
+    logLevel: "info",
     databaseUrl: source.DATABASE_URL,
     redisUrl: source.REDIS_URL,
     webOrigin: "http://localhost:3000",
@@ -24,4 +26,5 @@ test("parses and validates environment values", () => {
   assert.throws(() => readEnv({ ...source, DATABASE_URL: "not a url" }));
   assert.throws(() => readEnv({ ...source, DATABASE_URL: "https://localhost/tether" }));
   assert.throws(() => readEnv({ ...source, REDIS_URL: "https://localhost:6379" }));
+  assert.throws(() => readEnv({ ...source, LOG_LEVEL: "verbose" }));
 });

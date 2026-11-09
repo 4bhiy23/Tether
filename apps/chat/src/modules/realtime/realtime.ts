@@ -14,11 +14,16 @@ export function dispatchOutboxEnvelope(io: Server, payload: string) {
   const envelope = outboxEnvelopeSchema.safeParse(value);
   if (!envelope.success) return false;
 
-  io.local
-    .to(`conversation:${envelope.data.message.conversationId}`)
-    .emit("message.created", envelope.data.message);
-  for (const event of envelope.data.accountEvents) {
+  if (envelope.data.type === "conversation.read") {
+    const event = envelope.data.accountEvent;
     io.local.to(`user:${event.userId}`).emit("account.event", event);
+  } else {
+    io.local
+      .to(`conversation:${envelope.data.message.conversationId}`)
+      .emit("message.created", envelope.data.message);
+    for (const event of envelope.data.accountEvents) {
+      io.local.to(`user:${event.userId}`).emit("account.event", event);
+    }
   }
   return true;
 }
@@ -26,15 +31,15 @@ export function dispatchOutboxEnvelope(io: Server, payload: string) {
 export function createRealtime(
   io: Server,
   redisUrl: string,
-  onError: (source: string) => void = (source) => console.error(`${source} error`),
+  onError: (source: string, error?: unknown) => void,
 ) {
   const publisher = createClient({ url: redisUrl });
   const adapterSubscriber = publisher.duplicate();
   const outboxSubscriber = publisher.duplicate();
 
-  publisher.on("error", () => onError("Redis publisher"));
-  adapterSubscriber.on("error", () => onError("Redis adapter subscriber"));
-  outboxSubscriber.on("error", () => onError("Redis outbox subscriber"));
+  publisher.on("error", (error) => onError("Redis publisher", error));
+  adapterSubscriber.on("error", (error) => onError("Redis adapter subscriber", error));
+  outboxSubscriber.on("error", (error) => onError("Redis outbox subscriber", error));
 
   return {
     async start() {

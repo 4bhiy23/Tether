@@ -39,26 +39,51 @@ export function createChatService(database: Database = db) {
     return message;
   }
 
+  async function getConversationAccess(userId: string, conversationId: string) {
+    const [conversation] = await database
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.id, conversationId))
+      .limit(1);
+    if (!conversation) return { status: "not-found" } as const;
+
+    const [membership] = await database
+      .select({ userId: conversationMembers.userId })
+      .from(conversationMembers)
+      .where(
+        and(
+          eq(conversationMembers.conversationId, conversationId),
+          eq(conversationMembers.userId, userId),
+        ),
+      )
+      .limit(1);
+    return membership ? ({ status: "member" } as const) : ({ status: "forbidden" } as const);
+  }
+
   return {
-    async getConversationAccess(userId: string, conversationId: string) {
+    getConversationAccess,
+
+    async getConversationMemberIds(userId: string, conversationId: string) {
       const [conversation] = await database
         .select({ id: conversations.id })
         .from(conversations)
         .where(eq(conversations.id, conversationId))
         .limit(1);
       if (!conversation) return { status: "not-found" } as const;
-
-      const [membership] = await database
-        .select({ userId: conversationMembers.userId })
-        .from(conversationMembers)
-        .where(
-          and(
-            eq(conversationMembers.conversationId, conversationId),
-            eq(conversationMembers.userId, userId),
-          ),
-        )
-        .limit(1);
-      return membership ? ({ status: "member" } as const) : ({ status: "forbidden" } as const);
+      const members = await database.execute<{ userId: string }>(sql`
+        select "member"."user_id" as "userId"
+        from ${conversationMembers} as "member"
+        where "member"."conversation_id" = ${conversationId}
+          and exists (
+            select 1 from ${conversationMembers} as "requester"
+            where "requester"."conversation_id" = ${conversationId}
+              and "requester"."user_id" = ${userId}
+          )
+        order by "member"."user_id"
+      `);
+      return members.rows.length
+        ? ({ status: "found", memberIds: members.rows.map(({ userId: id }) => id) } as const)
+        : ({ status: "forbidden" } as const);
     },
 
     async createConversation(
@@ -73,12 +98,13 @@ export function createChatService(database: Database = db) {
             : memberIds.length >= 3 && memberIds.length <= 50;
         if (!validSize) return { status: "invalid-members" } as const;
 
-        const existingUsers = await tx.execute<{ id: string }>(sql`
-          select id from "user"
+        const existingUsers = await tx.execute<{ id: string; name: string; email: string }>(sql`
+          select id, name, email from "user"
           where id in (${sql.join(
             memberIds.map((memberId) => sql`${memberId}`),
             sql`, `,
           )})
+          order by id
         `);
         if (existingUsers.rows.length !== memberIds.length) {
           return { status: "invalid-members" } as const;
@@ -103,7 +129,7 @@ export function createChatService(database: Database = db) {
           const { directKey: _, ...storedConversation } = conversation;
           return {
             status: "created",
-            conversation: { ...storedConversation, memberIds },
+            conversation: { ...storedConversation, memberIds, members: existingUsers.rows },
           } as const;
         }
 
@@ -114,7 +140,7 @@ export function createChatService(database: Database = db) {
         const { directKey: _, ...storedConversation } = conversation;
         return {
           status: "created",
-          conversation: { ...storedConversation, memberIds },
+          conversation: { ...storedConversation, memberIds, members: existingUsers.rows },
         } as const;
       });
     },
@@ -184,24 +210,27 @@ export function createChatService(database: Database = db) {
             })
             .returning();
 
-          const members = await tx
-            .select({ userId: conversationMembers.userId })
-            .from(conversationMembers)
-            .where(eq(conversationMembers.conversationId, conversationId))
-            .orderBy(conversationMembers.userId);
+          const members = await tx.execute<{ id: string; name: string; email: string }>(sql`
+            select "user".id, "user".name, "user".email
+            from ${conversationMembers}
+            inner join "user" on "user".id = ${conversationMembers.userId}
+            where ${conversationMembers.conversationId} = ${conversationId}
+            order by "user".id
+          `);
           const eventPayload = {
             message,
             conversation: {
               ...conversation,
-              memberIds: members.map(({ userId: memberId }) => memberId),
+              memberIds: members.rows.map(({ id }) => id),
+              members: members.rows,
             },
           };
           await tx
             .insert(userSyncState)
-            .values(members.map(({ userId: memberId }) => ({ userId: memberId })))
+            .values(members.rows.map(({ id }) => ({ userId: id })))
             .onConflictDoNothing();
 
-          for (const { userId: memberId } of members) {
+          for (const { id: memberId } of members.rows) {
             const [state] = await tx
               .update(userSyncState)
               .set({ nextSequence: sql`${userSyncState.nextSequence} + 1` })
@@ -220,7 +249,7 @@ export function createChatService(database: Database = db) {
           await tx.insert(outboxEvents).values({
             type: "message.created",
             messageId: message.id,
-            payload: { message, userIds: members.map(({ userId: memberId }) => memberId) },
+            payload: { message, userIds: members.rows.map(({ id }) => id) },
           });
 
           return { status: "sent", message, replayed: false } as const;

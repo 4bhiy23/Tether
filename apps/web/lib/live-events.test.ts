@@ -12,6 +12,10 @@ function records() {
     kind: "direct",
     title: null,
     memberIds: ["alice", "bob"],
+    members: [
+      { id: "alice", name: "Alice", email: "alice@test.invalid" },
+      { id: "bob", name: "Bob", email: "bob@test.invalid" },
+    ],
     createdAt,
   };
   const message: Message = {

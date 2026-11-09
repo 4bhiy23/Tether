@@ -18,13 +18,13 @@ type Message = {
 type AccountEvent = {
   id: string;
   sequence: number;
-  payload: {
-    message: Message;
-    conversation: {
-      id: string;
-      memberIds: string[];
-    };
-  };
+  type: "message.created" | "conversation.read";
+  payload:
+    | {
+        message: Message;
+        conversation: { id: string; memberIds: string[] };
+      }
+    | { conversationId: string; lastReadSequence: number };
 };
 
 type EventPage = {
@@ -68,6 +68,16 @@ async function sendMessage(cookie: string, conversationId: string, content: stri
   });
   if (response.status !== 201) assert.fail(`${response.status}: ${await response.text()}`);
   return (await response.json()) as Message;
+}
+
+async function markRead(cookie: string, conversationId: string, sequence: number) {
+  const response = await fetch(`${proxyUrl}/api/conversations/${conversationId}/read`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", cookie, origin },
+    body: JSON.stringify({ sequence }),
+  });
+  if (!response.ok) assert.fail(`${response.status}: ${await response.text()}`);
+  return (await response.json()) as { lastReadSequence: number };
 }
 
 async function sync(cookie: string, after: number) {
@@ -140,12 +150,17 @@ test("delivers live events and catches an offline recipient up from another inst
     const conversation = (await conversationResponse.json()) as { id: string };
     conversationId = conversation.id;
 
-    const [aliceSocket, bobSocket] = await Promise.all([
+    const [aliceSocket, bobSocket, bobSecondSocket] = await Promise.all([
       connect(instanceUrls[1], alice.cookie),
       connect(instanceUrls[0], bob.cookie),
+      connect(instanceUrls[1], bob.cookie),
     ]);
-    sockets.push(aliceSocket, bobSocket);
-    await Promise.all([join(aliceSocket, conversation.id), join(bobSocket, conversation.id)]);
+    sockets.push(aliceSocket, bobSocket, bobSecondSocket);
+    await Promise.all([
+      join(aliceSocket, conversation.id),
+      join(bobSocket, conversation.id),
+      join(bobSecondSocket, conversation.id),
+    ]);
 
     const proxySocket = await connect(proxyUrl, alice.cookie);
     sockets.push(proxySocket);
@@ -155,6 +170,8 @@ test("delivers live events and catches an offline recipient up from another inst
     const bobMessages = collect(bobSocket, "message.created");
     const aliceEvents = collect(aliceSocket, "account.event");
     const bobEvents = collect(bobSocket, "account.event");
+    const bobSecondEvents = collect(bobSecondSocket, "account.event");
+    const bobTyping = collect(bobSocket, "typing.changed");
     const message = await sendMessage(alice.cookie, conversation.id, "cross-instance delivery");
 
     await waitFor(
@@ -162,7 +179,8 @@ test("delivers live events and catches an offline recipient up from another inst
         aliceMessages.length === 1 &&
         bobMessages.length === 1 &&
         aliceEvents.length === 1 &&
-        bobEvents.length === 1,
+        bobEvents.length === 1 &&
+        bobSecondEvents.length === 1,
     );
     await delay(750);
 
@@ -173,8 +191,38 @@ test("delivers live events and catches an offline recipient up from another inst
     assert.equal(aliceEvents.length, 1);
     assert.equal(bobEvents.length, 1);
 
-    const lastProcessedSequence = (bobEvents[0] as AccountEvent).sequence;
+    const typing = await aliceSocket.timeout(5_000).emitWithAck("typing.start", {
+      conversationId: conversation.id,
+    });
+    assert.deepEqual(typing, { status: "sent" });
+    await waitFor(() => bobTyping.length === 1);
+    assert.deepEqual(bobTyping, [{
+      conversationId: conversation.id,
+      userId: alice.id,
+      isTyping: true,
+    }]);
+    assert.deepEqual(
+      await aliceSocket.timeout(5_000).emitWithAck("typing.start", {
+        conversationId: conversation.id,
+      }),
+      { status: "rate-limited" },
+    );
+
+    const read = await markRead(bob.cookie, conversation.id, message.sequence);
+    assert.equal(read.lastReadSequence, message.sequence);
+    await waitFor(() => bobEvents.length === 2 && bobSecondEvents.length === 2);
+    assert.equal(aliceEvents.length, 1);
+    for (const event of [bobEvents[1], bobSecondEvents[1]] as AccountEvent[]) {
+      assert.equal(event.type, "conversation.read");
+      assert.deepEqual(event.payload, {
+        conversationId: conversation.id,
+        lastReadSequence: message.sequence,
+      });
+    }
+
+    const lastProcessedSequence = (bobEvents[1] as AccountEvent).sequence;
     bobSocket.disconnect();
+    bobSecondSocket.disconnect();
     const offlineMessages = [
       await sendMessage(alice.cookie, conversation.id, "offline one"),
       await sendMessage(alice.cookie, conversation.id, "offline two"),
@@ -195,10 +243,15 @@ test("delivers live events and catches an offline recipient up from another inst
     );
     assert.equal(new Set(events.map((event) => event.id)).size, events.length);
     assert.deepEqual(
-      events.map((event) => event.payload.message.id),
+      events.map((event) => {
+        assert.equal(event.type, "message.created");
+        assert.ok("message" in event.payload);
+        return event.payload.message.id;
+      }),
       offlineMessages.map((offlineMessage) => offlineMessage.id),
     );
     for (const event of events) {
+      assert.ok("conversation" in event.payload);
       assert.equal(event.payload.conversation.id, conversation.id);
       assert.deepEqual(event.payload.conversation.memberIds, [alice.id, bob.id].sort());
     }

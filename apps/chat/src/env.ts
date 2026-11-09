@@ -2,6 +2,10 @@ import { z } from "zod";
 
 const envSchema = z.object({
   CHAT_PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
+  INSTANCE_ID: z.string().trim().min(1).max(100).default("local"),
+  LOG_LEVEL: z
+    .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
+    .default("info"),
   BETTER_AUTH_SECRET: z
     .string()
     .min(32, "BETTER_AUTH_SECRET must be at least 32 characters"),
@@ -19,6 +23,8 @@ export function readEnv(source: NodeJS.ProcessEnv) {
 
   return {
     chatPort: values.CHAT_PORT,
+    instanceId: values.INSTANCE_ID,
+    logLevel: values.LOG_LEVEL,
     databaseUrl: values.DATABASE_URL,
     redisUrl: values.REDIS_URL,
     webOrigin: values.WEB_ORIGIN,

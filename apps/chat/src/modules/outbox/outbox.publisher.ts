@@ -16,23 +16,43 @@ const messageSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
-const accountEventSchema = z.object({
+const accountEventBase = z.object({
   id: z.uuid(),
   userId: z.string().min(1),
   sequence: z.number().int().positive(),
-  type: z.literal("message.created"),
   conversationId: z.uuid(),
-  messageId: z.uuid(),
-  payload: z.unknown(),
   createdAt: z.iso.datetime(),
 });
 
-export const outboxEnvelopeSchema = z.object({
-  version: z.literal(1),
-  outboxId: z.uuid(),
-  message: messageSchema,
-  accountEvents: z.array(accountEventSchema).min(1),
+const messageEventSchema = accountEventBase.extend({
+  type: z.literal("message.created"),
+  messageId: z.uuid(),
+  payload: z.unknown(),
 });
+const readEventSchema = accountEventBase.extend({
+  type: z.literal("conversation.read"),
+  messageId: z.null(),
+  payload: z.object({
+    conversationId: z.uuid(),
+    lastReadSequence: z.number().int().positive(),
+  }),
+});
+
+export const outboxEnvelopeSchema = z.discriminatedUnion("type", [
+  z.object({
+    version: z.literal(1),
+    type: z.literal("message.created"),
+    outboxId: z.uuid(),
+    message: messageSchema,
+    accountEvents: z.array(messageEventSchema).min(1),
+  }),
+  z.object({
+    version: z.literal(1),
+    type: z.literal("conversation.read"),
+    outboxId: z.uuid(),
+    accountEvent: readEventSchema,
+  }),
+]);
 
 export type OutboxEnvelope = z.infer<typeof outboxEnvelopeSchema>;
 type Database = typeof db;
@@ -53,6 +73,33 @@ export async function publishOutboxBatch(
       .for("update", { skipLocked: true });
 
     for (const outbox of pending) {
+      if (outbox.type === "conversation.read") {
+        if (!outbox.accountEventId) throw new Error("incomplete outbox event");
+        const [event] = await tx
+          .select()
+          .from(accountEvents)
+          .where(eq(accountEvents.id, outbox.accountEventId))
+          .limit(1);
+        if (!event) throw new Error("incomplete outbox event");
+        const envelope = outboxEnvelopeSchema.parse({
+          version: 1,
+          type: "conversation.read",
+          outboxId: outbox.id,
+          accountEvent: { ...event, createdAt: event.createdAt.toISOString() },
+        });
+        if ((await publish(OUTBOX_CHANNEL, JSON.stringify(envelope))) < 1) {
+          throw new Error("outbox has no subscribers");
+        }
+        await tx
+          .update(outboxEvents)
+          .set({ publishedAt: new Date() })
+          .where(and(eq(outboxEvents.id, outbox.id), isNull(outboxEvents.publishedAt)));
+        continue;
+      }
+
+      if (outbox.type !== "message.created" || !outbox.messageId) {
+        throw new Error("incomplete outbox event");
+      }
       const [message] = await tx
         .select()
         .from(messages)
@@ -67,6 +114,7 @@ export async function publishOutboxBatch(
 
       const envelope = outboxEnvelopeSchema.parse({
         version: 1,
+        type: "message.created",
         outboxId: outbox.id,
         message: { ...message, createdAt: message.createdAt.toISOString() },
         accountEvents: events.map((event) => ({
@@ -94,15 +142,18 @@ export async function runOutboxPublisher(
   options: {
     idleDelayMs?: number;
     errorDelayMs?: number;
+    onBatch?: (count: number) => void;
     onError?: (error: unknown) => void;
   } = {},
 ) {
-  const { idleDelayMs = 500, errorDelayMs = 1_000, onError } = options;
+  const { idleDelayMs = 500, errorDelayMs = 1_000, onBatch, onError } = options;
 
   while (!signal.aborted) {
     let waitMs = 0;
     try {
-      if ((await processBatch()) === 0) waitMs = idleDelayMs;
+      const count = await processBatch();
+      if (count === 0) waitMs = idleDelayMs;
+      else onBatch?.(count);
     } catch (error) {
       onError?.(error);
       waitMs = errorDelayMs;
@@ -122,12 +173,17 @@ export function startOutboxPublisher({
   publish,
   signal,
   database = db,
+  onBatch,
   onError,
 }: {
   publish: Publish;
   signal: AbortSignal;
   database?: Database;
+  onBatch?: (count: number) => void;
   onError?: (error: unknown) => void;
 }) {
-  return runOutboxPublisher(() => publishOutboxBatch(publish, database), signal, { onError });
+  return runOutboxPublisher(() => publishOutboxBatch(publish, database), signal, {
+    onBatch,
+    onError,
+  });
 }

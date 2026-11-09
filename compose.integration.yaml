@@ -11,6 +11,14 @@ services:
     ports: !override
       - "127.0.0.1:${CHAT_ONE_TEST_PORT}:4000"
 
+  chat-2:
+    ports: !override
+      - "127.0.0.1:${CHAT_TWO_TEST_PORT}:4000"
+
+  chat-3:
+    ports: !override
+      - "127.0.0.1:${CHAT_THREE_TEST_PORT}:4000"
+
   nginx:
     ports: !override
       - "127.0.0.1::80"

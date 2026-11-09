@@ -27,6 +27,10 @@ const conversation = {
   kind: "direct" as const,
   title: null,
   memberIds: ["alice", "bob"],
+  members: [
+    { id: "alice", name: "Alice", email: "alice@test.invalid" },
+    { id: "bob", name: "Bob", email: "bob@test.invalid" },
+  ],
   createdAt,
 };
 
@@ -56,7 +60,7 @@ test("parses snapshot, event-page, history, and live payloads", () => {
   assert.equal(
     syncSnapshotResponseSchema.parse({
       mode: "snapshot",
-      conversations: [{ ...conversation, messages: [message] }],
+      conversations: [{ ...conversation, messages: [message], lastReadSequence: 0 }],
       nextToken: 1,
       resetRequired: false,
     }).conversations.length,
@@ -84,7 +88,7 @@ test("rejects malformed identifiers, sequences, event types, and nested payloads
   assert.equal(
     syncSnapshotResponseSchema.safeParse({
       mode: "snapshot",
-      conversations: [{ ...conversation, kind: "group", messages: [message] }],
+      conversations: [{ ...conversation, kind: "group", messages: [message], lastReadSequence: 0 }],
       nextToken: 1,
       resetRequired: false,
     }).success,
@@ -127,4 +131,21 @@ test("rejects non-contiguous event pages and mismatched next tokens", () => {
     }).success,
     false,
   );
+});
+
+test("parses private conversation read events", () => {
+  const readEvent = accountEventSchema.parse({
+    id: crypto.randomUUID(),
+    userId: "bob",
+    sequence: 2,
+    type: "conversation.read",
+    conversationId,
+    messageId: null,
+    payload: { conversationId, lastReadSequence: 1 },
+    createdAt,
+  });
+
+  assert.equal(readEvent.type, "conversation.read");
+  assert.equal(readEvent.payload.lastReadSequence, 1);
+  assert.equal(accountEventSchema.safeParse({ ...readEvent, messageId }).success, false);
 });

@@ -3,6 +3,7 @@ import { db } from "../../db.js";
 import {
   accountEvents,
   conversationMembers,
+  conversationReadState,
   conversations,
   messages,
   userSyncState,
@@ -74,6 +75,7 @@ export function createSyncService(database: Database = db) {
               kind: conversations.kind,
               title: conversations.title,
               createdAt: conversations.createdAt,
+              lastReadSequence: sql<number>`coalesce(${conversationReadState.lastReadSequence}, 0)::float8`,
             })
             .from(conversations)
             .innerJoin(
@@ -81,6 +83,13 @@ export function createSyncService(database: Database = db) {
               and(
                 eq(conversationMembers.conversationId, conversations.id),
                 eq(conversationMembers.userId, userId),
+              ),
+            )
+            .leftJoin(
+              conversationReadState,
+              and(
+                eq(conversationReadState.conversationId, conversations.id),
+                eq(conversationReadState.userId, userId),
               ),
             )
             .where(
@@ -92,19 +101,24 @@ export function createSyncService(database: Database = db) {
             .orderBy(asc(conversations.createdAt), asc(conversations.id));
           const conversationIds = visible.map(({ id }) => id);
 
-          const members = conversationIds.length
-            ? await tx
-                .select({
-                  conversationId: conversationMembers.conversationId,
-                  userId: conversationMembers.userId,
-                })
-                .from(conversationMembers)
-                .where(inArray(conversationMembers.conversationId, conversationIds))
-                .orderBy(
-                  asc(conversationMembers.conversationId),
-                  asc(conversationMembers.userId),
-                )
-            : [];
+          const memberRows = conversationIds.length
+            ? await tx.execute<{
+                conversationId: string;
+                id: string;
+                name: string;
+                email: string;
+              }>(sql`
+                select
+                  ${conversationMembers.conversationId} as "conversationId",
+                  "user".id,
+                  "user".name,
+                  "user".email
+                from ${conversationMembers}
+                inner join "user" on "user".id = ${conversationMembers.userId}
+                where ${inArray(conversationMembers.conversationId, conversationIds)}
+                order by ${conversationMembers.conversationId}, "user".id
+              `)
+            : { rows: [] };
           const recentMessages = conversationIds.length
             ? await tx.execute<{
                 id: string;
@@ -149,12 +163,18 @@ export function createSyncService(database: Database = db) {
             mode: "snapshot",
             conversations: visible.map((conversation) => ({
               ...conversation,
-              memberIds: members
+              memberIds: memberRows.rows
                 .filter(({ conversationId }) => conversationId === conversation.id)
-                .map(({ userId: memberId }) => memberId),
-              messages: recentMessages.rows.filter(
-                ({ conversationId }) => conversationId === conversation.id,
-              ),
+                .map(({ id }) => id),
+              members: memberRows.rows
+                .filter(({ conversationId }) => conversationId === conversation.id)
+                .map(({ conversationId: _, ...member }) => member),
+              messages: recentMessages.rows
+                .filter(({ conversationId }) => conversationId === conversation.id)
+                .map((message) => ({
+                  ...message,
+                  createdAt: new Date(message.createdAt).toISOString(),
+                })),
             })),
             nextToken: state?.sequence ?? 0,
             resetRequired: false,

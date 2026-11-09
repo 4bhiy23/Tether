@@ -12,6 +12,10 @@ function records(sequence: number): { event: AccountEvent; snapshot: SnapshotCon
     kind: "direct",
     title: null,
     memberIds: ["alice", "bob"],
+    members: [
+      { id: "alice", name: "Alice", email: "alice@test.invalid" },
+      { id: "bob", name: "Bob", email: "bob@test.invalid" },
+    ],
     createdAt,
   };
   const message: Message = {
@@ -34,7 +38,7 @@ function records(sequence: number): { event: AccountEvent; snapshot: SnapshotCon
       payload: { conversation, message },
       createdAt,
     },
-    snapshot: { ...conversation, messages: [message] },
+    snapshot: { ...conversation, messages: [message], lastReadSequence: 0 },
   };
 }
 

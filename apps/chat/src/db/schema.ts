@@ -66,6 +66,22 @@ export const userSyncState = pgTable("user_sync_state", {
   nextSequence: bigint("next_sequence", { mode: "number" }).default(0).notNull(),
 });
 
+export const conversationReadState = pgTable(
+  "conversation_read_state",
+  {
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    lastReadSequence: bigint("last_read_sequence", { mode: "number" }).default(0).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.conversationId, table.userId] }),
+    check("conversation_read_state_sequence_check", sql`${table.lastReadSequence} >= 0`),
+  ],
+);
+
 export const accountEvents = pgTable(
   "account_events",
   {
@@ -76,13 +92,15 @@ export const accountEvents = pgTable(
     conversationId: uuid("conversation_id")
       .notNull()
       .references(() => conversations.id, { onDelete: "cascade" }),
-    messageId: uuid("message_id")
-      .notNull()
-      .references(() => messages.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
     payload: jsonb().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
+    check(
+      "account_events_type_reference_check",
+      sql`(${table.type} = 'message.created' and ${table.messageId} is not null) or (${table.type} = 'conversation.read' and ${table.messageId} is null)`,
+    ),
     unique("account_events_user_sequence_unique").on(table.userId, table.sequence),
     unique("account_events_user_message_unique").on(table.userId, table.messageId),
   ],
@@ -93,15 +111,21 @@ export const outboxEvents = pgTable(
   {
     id: uuid().defaultRandom().primaryKey(),
     type: text().notNull(),
-    messageId: uuid("message_id")
-      .notNull()
-      .references(() => messages.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    accountEventId: uuid("account_event_id").references(() => accountEvents.id, {
+      onDelete: "cascade",
+    }),
     payload: jsonb().notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     publishedAt: timestamp("published_at", { withTimezone: true }),
   },
   (table) => [
+    check(
+      "outbox_events_type_reference_check",
+      sql`(${table.type} = 'message.created' and ${table.messageId} is not null and ${table.accountEventId} is null) or (${table.type} = 'conversation.read' and ${table.messageId} is null and ${table.accountEventId} is not null)`,
+    ),
     unique("outbox_events_message_unique").on(table.messageId),
+    unique("outbox_events_account_event_unique").on(table.accountEventId),
     index("outbox_events_pending_created_at_idx")
       .on(table.createdAt)
       .where(sql`${table.publishedAt} is null`),

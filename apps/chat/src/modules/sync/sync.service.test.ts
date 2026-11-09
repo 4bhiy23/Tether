@@ -9,6 +9,7 @@ import {
   userSyncState,
 } from "../../db/schema.js";
 import { createChatService } from "../chat/chat.service.js";
+import { createReadStateService } from "../read-state/read-state.service.js";
 import { createSyncService } from "./sync.service.js";
 
 test("returns isolated contiguous pages, snapshots, and reset signals", async () => {
@@ -17,6 +18,7 @@ test("returns isolated contiguous pages, snapshots, and reset signals", async ()
   const conversationIds: string[] = [];
   const chat = createChatService(db);
   const sync = createSyncService(db);
+  const reads = createReadStateService(db);
 
   await pool.query(
     `insert into "user" (id, name, email, "emailVerified") values
@@ -99,10 +101,16 @@ test("returns isolated contiguous pages, snapshots, and reset signals", async ()
     assert.equal(snapshot.conversations.length, 1);
     assert.equal(snapshot.conversations[0].id, direct.id);
     assert.deepEqual(snapshot.conversations[0].memberIds, [alice, bob].sort());
+    assert.deepEqual(snapshot.conversations[0].members, [
+      { id: alice, name: "Alice", email: `${alice}@test.invalid` },
+      { id: bob, name: "Bob", email: `${bob}@test.invalid` },
+    ].sort((left, right) => left.id.localeCompare(right.id)));
+    assert.equal(snapshot.conversations[0].lastReadSequence, 0);
     assert.deepEqual(
       snapshot.conversations[0].messages.map(({ sequence }) => sequence),
       Array.from({ length: 50 }, (_, index) => index + 6),
     );
+    assert.match(snapshot.conversations[0].messages[0].createdAt, /^\d{4}-\d{2}-\d{2}T/);
 
     const beforeConcurrentMessage = await sync.getEvents(bob, 55, 100);
     const later = await chat.sendMessage(alice, direct.id, {
@@ -116,6 +124,23 @@ test("returns isolated contiguous pages, snapshots, and reset signals", async ()
       afterConcurrentMessage.events.map(({ sequence }) => sequence),
       [56],
     );
+
+    assert.deepEqual(await reads.markRead(bob, direct.id, 10), {
+      status: "read",
+      lastReadSequence: 10,
+      advanced: true,
+    });
+    const readPage = await sync.getEvents(bob, 56, 100);
+    assert.equal(readPage.resetRequired, false);
+    assert.deepEqual(readPage.events.map(({ type, sequence, payload }) => ({ type, sequence, payload })), [
+      {
+        type: "conversation.read",
+        sequence: 57,
+        payload: { conversationId: direct.id, lastReadSequence: 10 },
+      },
+    ]);
+    const readSnapshot = await sync.getSnapshot(bob);
+    assert.equal(readSnapshot.conversations[0].lastReadSequence, 10);
 
     await db
       .delete(accountEvents)

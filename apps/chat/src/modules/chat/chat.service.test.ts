@@ -40,6 +40,16 @@ test("writes messages, account events, and outbox records atomically and idempot
     assert.equal(duplicateDirectResult.conversation.id, direct.id);
     assert.deepEqual(direct.memberIds, [alice, bob].sort());
     assert.deepEqual(await chat.getConversationAccess(alice, direct.id), { status: "member" });
+    assert.deepEqual(await chat.getConversationMemberIds(alice, direct.id), {
+      status: "found",
+      memberIds: [alice, bob].sort(),
+    });
+    assert.deepEqual(await chat.getConversationMemberIds(outsider, direct.id), {
+      status: "forbidden",
+    });
+    assert.deepEqual(await chat.getConversationMemberIds(alice, randomUUID()), {
+      status: "not-found",
+    });
     assert.deepEqual(await chat.getConversationAccess(outsider, direct.id), {
       status: "forbidden",
     });
@@ -126,6 +136,7 @@ test("writes messages, account events, and outbox records atomically and idempot
           title: direct.title,
           createdAt: direct.createdAt.toISOString(),
           memberIds: [alice, bob].sort(),
+          members: direct.members,
         },
       });
     }

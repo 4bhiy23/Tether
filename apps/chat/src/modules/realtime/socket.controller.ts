@@ -1,19 +1,32 @@
 import type { Socket } from "socket.io";
 import { z } from "zod";
 import { chatService, type ChatService } from "../chat/chat.service.js";
+import { presenceService, type PresenceService } from "../presence/presence.service.js";
+import { registerTypingHandlers } from "./typing.js";
 
 const conversationInput = z.object({ conversationId: z.uuid() });
-type MembershipService = Pick<ChatService, "getConversationAccess">;
-type Acknowledgement = {
-  status: "joined" | "left" | "invalid" | "not-found" | "forbidden" | "unavailable";
+type MemberIdsResult =
+  | { status: "found"; memberIds: string[] }
+  | { status: "not-found" | "forbidden" };
+type MembershipService = Pick<ChatService, "getConversationAccess"> & {
+  getConversationMemberIds?: (userId: string, conversationId: string) => Promise<MemberIdsResult>;
 };
-type Acknowledge = (result: Acknowledgement) => void;
+type Presence = Pick<PresenceService, "connected" | "disconnected" | "statuses">;
 
-function acknowledge(callback: unknown, result: Acknowledgement) {
-  if (typeof callback === "function") (callback as Acknowledge)(result);
+function acknowledge(callback: unknown, result: unknown) {
+  if (typeof callback === "function") (callback as (value: unknown) => void)(result);
 }
 
-export function createSocketController(chats: MembershipService = chatService) {
+const disabledPresence: Presence = {
+  connected: async () => undefined,
+  disconnected: async () => undefined,
+  statuses: async () => ({}),
+};
+
+export function createSocketController(
+  chats: MembershipService = chatService,
+  presence: Presence = disabledPresence,
+) {
   return {
     async connected(socket: Socket) {
       socket.on("conversation.join", async (input: unknown, callback: unknown) => {
@@ -42,6 +55,38 @@ export function createSocketController(chats: MembershipService = chatService) {
         acknowledge(callback, { status: "left" });
       });
 
+      socket.on("presence.get", async (input: unknown, callback: unknown) => {
+        const parsed = conversationInput.safeParse(input);
+        if (!parsed.success) return acknowledge(callback, { status: "invalid" });
+        if (!chats.getConversationMemberIds) {
+          return acknowledge(callback, { status: "unavailable" });
+        }
+
+        try {
+          const result = await chats.getConversationMemberIds(
+            socket.data.userId,
+            parsed.data.conversationId,
+          );
+          if (result.status !== "found") return acknowledge(callback, result);
+          acknowledge(callback, {
+            status: "ok",
+            members: await presence.statuses(result.memberIds),
+          });
+        } catch {
+          acknowledge(callback, { status: "unavailable" });
+        }
+      });
+
+      registerTypingHandlers(socket);
+      const presenceRegistration = presence
+        .connected(socket.data.userId, socket.id)
+        .catch(() => undefined);
+      socket.on("disconnect", () => {
+        void presenceRegistration.then(() =>
+          presence.disconnected(socket.data.userId, socket.id).catch(() => undefined),
+        );
+      });
+
       await socket.join([
         `session:${socket.data.sessionId}`,
         `user:${socket.data.userId}`,
@@ -51,4 +96,7 @@ export function createSocketController(chats: MembershipService = chatService) {
   };
 }
 
-export const socketController = createSocketController();
+export const socketController = createSocketController(
+  chatService,
+  presenceService,
+);

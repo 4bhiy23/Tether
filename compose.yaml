@@ -2,6 +2,7 @@ x-chat-environment: &chat-environment
   CHAT_PORT: 4000
   DATABASE_URL: postgresql://tether:tether@postgres:5432/tether
   REDIS_URL: redis://redis:6379
+  LOG_LEVEL: ${LOG_LEVEL:-info}
   WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
   BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:4000}
   BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?BETTER_AUTH_SECRET must be set}
@@ -68,12 +69,21 @@ services:
 
   chat-1:
     <<: *chat-service
+    environment:
+      <<: *chat-environment
+      INSTANCE_ID: chat-1
 
   chat-2:
     <<: *chat-service
+    environment:
+      <<: *chat-environment
+      INSTANCE_ID: chat-2
 
   chat-3:
     <<: *chat-service
+    environment:
+      <<: *chat-environment
+      INSTANCE_ID: chat-3
 
   nginx:
     image: nginx:alpine

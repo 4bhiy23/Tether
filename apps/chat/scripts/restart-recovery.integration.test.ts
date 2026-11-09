@@ -110,6 +110,7 @@ async function sendMessage(cookie: string, conversationId: string, content: stri
       method: "POST",
       headers: { "content-type": "application/json", cookie, origin },
       body: JSON.stringify({ clientMessageId, content }),
+      signal: AbortSignal.timeout(1_500),
     }).catch(() => undefined);
     if (response?.status === 201 || response?.status === 200) {
       return (await response.json()) as Message;
@@ -143,7 +144,7 @@ test("recovers committed messages after the serving instance restarts", async ()
     const bobSocket = await connect(bob.cookie);
     sockets.push(bobSocket);
     const disconnected = event(bobSocket, "disconnect", 10_000);
-    await compose("stop", "chat-1");
+    await compose("kill", "chat-1");
     chatStopped = true;
     await disconnected;
 
